@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body.dark {
+  background-color: #1a202c;
+  color: #e2e8f0;
+}
+
+body.dark .bg-white {
+  background-color: #2d3748;
+  color: #e2e8f0;
+}
+
+body.dark .border,
+body.dark .border-b {
+  border-color: #4a5568;
+}
+
+body.dark input,
+body.dark select,
+body.dark textarea {
+  background-color: #4a5568;
+  color: #e2e8f0;
+  border-color: #718096;
+}
