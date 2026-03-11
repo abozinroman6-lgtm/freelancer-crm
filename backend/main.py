@@ -4,7 +4,7 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, 
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
 from pydantic import BaseModel
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, List
 import os
 
@@ -70,7 +70,6 @@ class ClientCreate(ClientBase):
 class ClientResponse(ClientBase):
     id: int
     created_at: datetime
-    projects: List = []
 
     class Config:
         from_attributes = True
@@ -89,8 +88,6 @@ class ProjectCreate(ProjectBase):
 class ProjectResponse(ProjectBase):
     id: int
     created_at: datetime
-    total_time: int = 0
-    total_earned: float = 0
 
     class Config:
         from_attributes = True
@@ -176,27 +173,13 @@ def create_project(project: ProjectCreate, db: Session = Depends(get_db)):
 
 @app.get("/api/projects", response_model=List[ProjectResponse])
 def list_projects(db: Session = Depends(get_db)):
-    projects = db.query(Project).all()
-    result = []
-    for p in projects:
-        # Считаем общее время
-        entries = db.query(TimeEntry).filter(TimeEntry.project_id == p.id).all()
-        total_seconds = sum(e.duration for e in entries if e.duration)
-        p.total_time = total_seconds
-        p.total_earned = (total_seconds / 3600) * p.hourly_rate
-        result.append(p)
-    return result
+    return db.query(Project).all()
 
 @app.get("/api/projects/{project_id}", response_model=ProjectResponse)
 def get_project(project_id: int, db: Session = Depends(get_db)):
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(404, "Project not found")
-    
-    entries = db.query(TimeEntry).filter(TimeEntry.project_id == project.id).all()
-    total_seconds = sum(e.duration for e in entries if e.duration)
-    project.total_time = total_seconds
-    project.total_earned = (total_seconds / 3600) * project.hourly_rate
     return project
 
 @app.put("/api/projects/{project_id}/status")
@@ -209,8 +192,6 @@ def update_status(project_id: int, status: str, db: Session = Depends(get_db)):
     return {"ok": True}
 
 # ---------- Time tracking ----------
-active_timers = {}
-
 @app.post("/api/time/start", response_model=TimeEntryResponse)
 def start_timer(entry: TimeEntryStart, db: Session = Depends(get_db)):
     db_entry = TimeEntry(
@@ -221,7 +202,6 @@ def start_timer(entry: TimeEntryStart, db: Session = Depends(get_db)):
     db.add(db_entry)
     db.commit()
     db.refresh(db_entry)
-    active_timers[entry.project_id] = db_entry.id
     return db_entry
 
 @app.post("/api/time/stop")
@@ -235,9 +215,6 @@ def stop_timer(data: TimeEntryStop, db: Session = Depends(get_db)):
     entry.duration = int(duration.total_seconds())
     db.commit()
     
-    if entry.project_id in active_timers:
-        del active_timers[entry.project_id]
-    
     return {"ok": True, "duration": entry.duration}
 
 @app.get("/api/time/project/{project_id}")
@@ -246,6 +223,8 @@ def get_project_time(project_id: int, db: Session = Depends(get_db)):
     return entries
 
 # ---------- Экспорт ----------
+from fastapi.responses import Response
+
 @app.get("/api/export/project/{project_id}/csv")
 def export_project_csv(project_id: int, db: Session = Depends(get_db)):
     project = db.query(Project).filter(Project.id == project_id).first()
@@ -256,13 +235,18 @@ def export_project_csv(project_id: int, db: Session = Depends(get_db)):
     
     csv = "Start,End,Duration (s),Description\n"
     for e in entries:
-        start = e.start_time.strftime("%Y-%m-%d %H:%M")
+        start = e.start_time.strftime("%Y-%m-%d %H:%M") if e.start_time else ""
         end = e.end_time.strftime("%Y-%m-%d %H:%M") if e.end_time else ""
         csv += f"{start},{end},{e.duration},{e.description or ''}\n"
     
     return Response(content=csv, media_type="text/csv", headers={
         "Content-Disposition": f"attachment; filename=project_{project_id}.csv"
     })
+
+# ---------- HEALTHCHECK (НОВЫЙ) ----------
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
 
 # ---------- Запуск ----------
 if __name__ == "__main__":
